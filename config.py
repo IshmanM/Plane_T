@@ -1,0 +1,4 @@
+
+FRAME_W = 640
+FRAME_H = 480
+FPS = 30

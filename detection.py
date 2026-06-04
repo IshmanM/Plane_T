@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import config
 
 
 class Detection:
@@ -11,24 +12,35 @@ class Detection:
 
 class Measurement:
     def __init__(self, x: float | None, y: float | None, z: float | None = None, pitch: float | None = None, roll: float | None = None, yaw: float | None = None):
-        self.x = x 
-        self.y = y
-        self.y = z
+        self.x = x # x points right
+        self.y = y # y points down
+        self.z = z # z points away from the camera
         self.pitch = pitch
         self.roll = roll
         self.yaw = yaw 
 
 
+
+LOWER_HSV = np.array([14, 50, 100])
+UPPER_HSV = np.array([25, 130, 200])
+
+# approximate the focal length
+px_focal_length = 500  # = average of a few (reference_pixel_width * reference_distance / reference_width)
+w =  0.065 # real marker width 
+
 def detector(frame):
     
     #implementation TBD#################3
+    # need to account for case where nothing detected...
+    # need to throw in some extra blur/filtering/rejection here, before even fedd to kalman later
 
+    # Classical CV Detector using thresholding
     u, v, px_w, px_h = None, None, None, None
+    x, y, z, pitch, roll, yaw = None, None, None, None, None, None
 
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    lower_hsv = np.array([0, 30, 40])
-    upper_hsv = np.array([25, 200, 255])
-    mask = cv2.inRange(frame, lower_hsv, upper_hsv)
+
+    mask = cv2.inRange(frame, LOWER_HSV, UPPER_HSV)
     contours, heirarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if len(contours) > 0: 
         largest_contour = max(contours, key = cv2.contourArea)
@@ -36,31 +48,14 @@ def detector(frame):
         u = u + px_w/2
         v = v + px_h/2
 
-    print(u, v, px_w, px_h)
+        # Depth estimator based on emperical calibration & Pose Converter
+        z = px_focal_length*w/px_w
+        x = (u - config.FRAME_W/2)*z/px_focal_length 
+        y = (v - config.FRAME_H/2)*z/px_focal_length 
 
     detection = Detection(u, v, px_w, px_h)
-    measurement = Measurement(0,0,0,0,0,0) 
-
-    ################
-
+    measurement = Measurement(x,y,z,pitch,roll,yaw) 
     return detection, measurement
-
-
-
-# hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-
-# mask = cv2.inRange(hsv, lower_hsv, upper_hsv)
-
-# mask = clean_mask(mask)
-
-# contours = cv2.findContours(mask, ...)
-
-# largest_contour = max(contours, key=cv2.contourArea)
-
-# x, y, w, h = cv2.boundingRect(largest_contour)
-
-# center_u = x + w / 2
-# center_v = y + h / 2
 
 
 
