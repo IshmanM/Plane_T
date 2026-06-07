@@ -3,13 +3,14 @@ import models
 import numpy as np
 from enum import Enum, auto
 from models import Detection, Measurement
-
+import config
 
 class TrackStatus(Enum):
     TENTATIVE = auto()
     CONFIRMED = auto()
     DEAD = auto()
 
+X, Y, Z, DZ, DX, DY, DZ = 0,1,2,3,4,5
 
 class Track:
     
@@ -23,7 +24,15 @@ class Track:
             0.0, 0.0, 0.0
         ], dtype=float)
     
-        self.covariance = np.eye(6, dtype=float)
+        # Need to tune starting covariance...
+        self.covariance = np.diag([
+            config.INIT_TRACK_SIGMA_X ** 2,
+            config.INIT_TRACK_SIGMA_Y ** 2,
+            config.INIT_TRACK_SIGMA_Z ** 2,
+            config.INIT_TRACK_SIGMA_DX ** 2,
+            config.INIT_TRACK_SIGMA_DY ** 2,
+            config.INIT_TRACK_SIGMA_DZ ** 2
+        ], dtype=float)
 
         self.hit_streak = 1       # consecutive hits   
         self.missed_streak = 0    # consecutive misses
@@ -51,27 +60,27 @@ class Track:
     
     @property
     def x(self):
-        return self.state[0]
+        return self.state[X]
 
     @property
     def y(self):
-        return self.state[1]
+        return self.state[Y]
 
     @property
     def z(self):
-        return self.state[2]
+        return self.state[Z]
     
     @property
     def dx(self):
-        return self.state[3]
+        return self.state[DX]
 
     @property
     def dy(self):
-        return self.state[4]
+        return self.state[DY]
 
     @property
     def dz(self):
-        return self.state[5]   
+        return self.state[DZ]   
 
 
 
@@ -97,18 +106,48 @@ class SingleObjectTracker:
         self.gate_threshold = gate_threshold
 
     
-    def predict(dt):
+    def gating_distance(self, measurement: Measurement):
+        if self.track is None:
+            raise ValueError("Cannot compute gating distance without an active track.")
         
-        #...
-        
-        return
-    
-    def gating_distance(measurement: Measurement):
-        #...
+        # Euclidian distance 
+        measurement_position = np.array([measurement.x, measurement.y, measurement.z], dtype=float)  
+        diff = measurement_position - self.track.state[:3]
+        return float(diff @ diff)
 
+    def predict(self, dt):
+        """
+        Kalman prediction step.
+
+        Theory:
+            x_k_pred = F_k @ x_k_prev
+            P_k_pred = F_k @ P_k_prev @ F_k.T + Q_k
+
+        In this tracker:
+            state = [x, y, z, dx, dy, dz]
+        """
+
+        if self.track is None:
+            return
+        
+        x_k_prev = self.track.state
+
+        P_k_prev = self.track.covariance
+
+        F_k = np.eye(6, dtype=float) # State transition matrix
+        F_k[X, DX] = dt
+        F_k[Y, DY] = dt
+        F_k[Z, DZ] = dt
+
+        Q_k = np.eye(6, dtype=float) * self.process_noise
+        x_k_pred = F_k @ x_k_prev
+        P_k_pred = F_k @ P_k_prev @ F_k.T + Q_k
+
+        self.track.state = x_k_pred
+        self.track.covariance = P_k_pred
         return
-    
-    def update_with_measurement(measurement: Measurement):
+       
+    def update_with_measurement(self, measurement: Measurement):
         
        #... self.track.mark_detected <--DO NOT DO THIS HERE
 

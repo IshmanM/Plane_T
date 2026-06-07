@@ -16,9 +16,7 @@ def estimateWorldPosition(u, v, px_w, px_h):
 # world frame to image frame relative to camera lens
 
 def estimateImagePosition(x, y, z):
-    if x is None or y is None or z is None:
-        return None, None
-    if z == 0:
+    if z <= 0:
         return 0, 0 
     u = (x * config.PX_FOCAL_LENGTH / z) + config.FRAME_W / 2
     v = (y * config.PX_FOCAL_LENGTH / z) + config.FRAME_H / 2
