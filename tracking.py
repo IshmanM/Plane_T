@@ -91,7 +91,7 @@ class SingleObjectTracker:
     def __init__(
         self,
         min_hits: int = 3,
-        max_missed_on_confirmed: int = 15,
+        max_missed_on_confirmed: int = 5,
         max_missed_on_tentative: int = 1,
         process_noise: float = 0.01,
         sigma_meas_x: float = 0.05,

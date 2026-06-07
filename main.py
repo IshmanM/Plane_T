@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 import tracking as tra
 import detection as det
 import visualization as vis
@@ -56,31 +57,35 @@ if __name__ == "__main__":
 
             cv2.circle(frame, (int(track_u), int(track_v)), radius=5, color=(0,0,255), thickness=-1)
 
-
-            # need to draw velocity arrow...
-            #
-            #
-
-
+            velocity_2d = np.array([tracker.track.dx, tracker.track.dy], dtype=float)
+            velocity_norm = np.linalg.norm(velocity_2d)
+            if velocity_norm > 1e-6:
+                arrow_length_px = 40
+                direction = velocity_2d / velocity_norm
+                arrow_end = (
+                    int(round(int(track_u) + arrow_length_px * direction[0])),
+                    int(round(int(track_v) + arrow_length_px * direction[1])),
+                )
+                cv2.arrowedLine(frame, (int(track_u), int(track_v)), arrow_end, (0, 0, 255), thickness=2, tipLength=0.25)
 
             track_label = ("Confirmed" if track_status == tra.TrackStatus.CONFIRMED else "Tentative") 
             track_label = track_label + " track: (x: " + f"{tracker.track.x:.4f}" + ", y: " + f"{tracker.track.y:.4f}"  + ", z: " + f"{tracker.track.z:.4f}" 
-            track_label = track_label + ", dx: " + f"{tracker.track.dx:.4f}" + ", dy: " + f"{tracker.track.dy:.4f}"  + ", dz: " + f"{tracker.track.dz:.4f}" 
+            track_label = track_label + ", dx: " + f"{tracker.track.dx:.4f}" + ", dy: " + f"{tracker.track.dy:.4f}"  + ", dz: " + f"{tracker.track.dz:.4f}" + ")"
 
 
 
         
-
-        frame = cv2.flip(frame, 1) # optional flip as a last step before labelling, for viewing only 
-        cv2.putText(frame, detection_label, (10,20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color=(0,255,0), thickness=2)
-        cv2.putText(frame, track_label, (10,50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color=(0,255,0), thickness=2)
+        # flip (optional) as a last step before then labelling, for viewing only 
+        frame = cv2.flip(frame, 1) 
+        cv2.putText(frame, detection_label, (10,20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color=(0,255,0), thickness=2)
+        cv2.putText(frame, track_label, (10,50), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color=(0,0,255), thickness=2)
 
 
 
         # Lock on to object... (will need rpi version of code)
-
-
-
+        #
+        #
+        #
 
 
 
