@@ -14,8 +14,11 @@ cap.set(cv2.CAP_PROP_FPS, config.FPS)
 
 if __name__ == "__main__": 
 
-    tracker = tra.SingleObjectTracker("""insert params""")
+    tracker = tra.SingleObjectTracker()
     dt = 1/config.FPS
+
+    last_detection_px_w = 0
+    last_detection_px_h = 0
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -25,8 +28,10 @@ if __name__ == "__main__":
         detection_label = "No detections"
 
         if object_detected:
+            last_detection_px_w = detection.px_w
+            last_detection_px_h = detection.px_h
             cv2.rectangle(frame, 
-                        (int(detection.u - detection.px_w/2), int(detection.v - detection.px_h/2)),
+                        (int(detection.u -detection.px_w/2), int(detection.v - detection.px_h/2)),
                         (int(detection.u + detection.px_w/2), int(detection.v + detection.px_h/2)),
                         color=(0,255,0), thickness=2)
             
@@ -43,9 +48,10 @@ if __name__ == "__main__":
         if track_status == tra.TrackStatus.CONFIRMED or track_status == tra.TrackStatus.TENTATIVE:
             track_u, track_v = estimateImagePosition(tracker.track.x, tracker.track.y, tracker.track.z)
 
+            # rectangle is drawn based on last detected px_w, px_h. might change this...
             cv2.rectangle(frame,
-                        (int(track_u - detection.px_w/2), int(track_v - detection.px_h/2)),
-                        (int(track_u + detection.px_w/2), int(track_v + detection.px_h/2)),
+                        (int(track_u - last_detection_px_w/2), int(track_v - last_detection_px_h/2)),
+                        (int(track_u + last_detection_px_w/2), int(track_v + last_detection_px_h/2)),
                         color=(0,0,255), thickness=2)
 
             cv2.circle(frame, (int(track_u), int(track_v)), radius=5, color=(0,0,255), thickness=-1)

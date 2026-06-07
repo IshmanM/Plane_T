@@ -10,7 +10,7 @@ class TrackStatus(Enum):
     CONFIRMED = auto()
     DEAD = auto()
 
-X, Y, Z, DZ, DX, DY, DZ = 0,1,2,3,4,5
+X, Y, Z, DX, DY, DZ = 0,1,2,3,4,5
 
 class Track:
     
@@ -34,7 +34,7 @@ class Track:
             sigma_dx ** 2,
             sigma_dy ** 2,
             sigma_dy ** 2
-        ], dtype=float)
+        ]).astype(float)
 
         self.hit_streak = 1       # consecutive hits   
         self.missed_streak = 0    # consecutive misses
@@ -206,7 +206,7 @@ class SingleObjectTracker:
             if not object_detected:
                 return TrackStatus.DEAD  
             else:
-                self.track = Track(measurement)
+                self.track = Track(measurement, self.min_hits)
 
         # TENTATIVE track logic:
         #     both a far & missing measurement should count as a miss, then check if dead.
@@ -226,10 +226,10 @@ class SingleObjectTracker:
                         self.track = None 
                         return TrackStatus.DEAD
                     else:
-                        self.track = Track(measurement)
+                        self.track = Track(measurement, self.min_hits)
             else:
                 # hit
-                self.track.mark_hit(measurement)
+                self.track.mark_hit(measurement, self.min_hits)
                 self.update_with_measurement(measurement) # Kalman Measurement update
         
         return TrackStatus.CONFIRMED if self.track.confirmed else TrackStatus.TENTATIVE
