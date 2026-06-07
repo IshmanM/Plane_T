@@ -5,6 +5,7 @@ import detection as det
 import visualization as vis
 import config
 from util import estimateImagePosition
+from datetime import datetime
 
 
 
@@ -112,6 +113,11 @@ if __name__ == "__main__":
         # p = pause/play toggle
         elif key == ord("p"):
             paused = not paused
+        # s = screenshot
+        elif key == ord("s"):
+            filename = datetime.now().strftime("screenshot_%Y%m%d_%H%M%S.png")
+            cv2.imwrite("screenshots/" + filename, frame)
+            print(f"Saved {filename}")
 
 
     cap.release()
