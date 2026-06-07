@@ -32,7 +32,7 @@ class Track:
         self.last_measurement = initial_measurement
 
 
-    def mark_detected(self, measurement, min_hits: int):
+    def mark_hit(self, measurement, min_hits: int):
         self.hit_streak += 1
         self.missed_streak = 0
         self.last_measurement = measurement
@@ -121,64 +121,36 @@ class SingleObjectTracker:
         #     any measurement should create a track.
         #     a missing measurement should do nothing.
         if self.track is None:
-            if object_detected:
-                self.track = Track(measurement)
+            if not object_detected:
+                return TrackStatus.DEAD  
             else:
-                return TrackStatus.DEAD        
+                self.track = Track(measurement)
 
         # TENTATIVE track logic:
-        #     a far measurement should replace it with new Track.
-        #     a missing measurement should set the track to None.
-        elif not self.track.confirmed:
-            self.predict(dt) # Kalman Prediction update
-
-            # if not object_detected:
-            #     self.track = None
-            #     return TrackStatus.DEAD
-            
-            # elif self.gating_distance(measurement) > self.gate_threshold:
-            #     self.track = Track(measurement)
-        
-            # else: 
-            #     self.track.mark_detected()
-            #     self.update_with_measurement(measurement) # Kalman Measurement update
-                
-            if (not object_detected) or (self.gating_distance(measurement) > self.gate_threshold):
-                # DEAD tracks are dropped
-                self.track.mark_missed()
-                if self.track.is_dead(self.max_missed_on_tentative):
-                    if not object_detected:
-                        self.track = None 
-                        return TrackStatus.DEAD
-                    else:
-                        self.track = Track(measurement)
-            
-            else:
-                self.track.mark_detected()
-                self.update_with_measurement(measurement) # Kalman Measurement update
-                return TrackStatus.CONFIRMED
-                
+        #     both a far & missing measurement should count as a miss, then check if dead.
         # CONFIRMED track logic:
         #     both a far & missing measurement should count as a miss, then check if dead.
+        #     defferent max_missed
+        #     they do not become TENTATIVE tracks just because of a miss
         else:
             self.predict(dt) # Kalman Prediction update
-
+            
             if (not object_detected) or (self.gating_distance(measurement) > self.gate_threshold):
-                # DEAD tracks are dropped
+                # miss 
                 self.track.mark_missed()
-                if self.track.is_dead(self.max_missed_on_confirmed):
+                max_missed = self.max_missed_on_confirmed if self.track.confirmed else self.max_missed_on_tentative
+                if self.track.is_dead(max_missed):
                     if not object_detected:
                         self.track = None 
                         return TrackStatus.DEAD
                     else:
                         self.track = Track(measurement)
-            
             else:
-                self.track.mark_detected()
+                # hit
+                self.track.mark_hit()
                 self.update_with_measurement(measurement) # Kalman Measurement update
-                return TrackStatus.CONFIRMED
         
-        return #TENTATIVE or CONFIRMED based on ...
+        return TrackStatus.CONFIRMED if self.track.confirmed else TrackStatus.TENTATIVE
     
 
         
