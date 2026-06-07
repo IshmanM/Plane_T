@@ -20,35 +20,55 @@ if __name__ == "__main__":
     while cap.isOpened():
         ret, frame = cap.read()
 
+        # Detect the object and produce a measurement
         object_detected, detection, measurement = det.detectSingleObject(frame)
         detection_label = "No detections"
 
-        # Draw the detection
         if object_detected:
             cv2.rectangle(frame, 
                         (int(detection.u - detection.px_w/2), int(detection.v - detection.px_h/2)),
                         (int(detection.u + detection.px_w/2), int(detection.v + detection.px_h/2)),
                         color=(0,255,0), thickness=2)
             
+            cv2.circle(frame, (int(detection.u), int(detection.v)), radius=5, color=(0,255,0), thickness=-1)
+
             detection_label = "Measurement: (x: " + f"{measurement.x:.4f}" + ", y: " + f"{measurement.y:.4f}"  + ", z: " + f"{measurement.z:.4f}" + ")"
+        
+
+
+        # Track the object state
+        track_status = tracker.update(object_detected, measurement, dt)
+        
+        track_label = "Dead track"
+        if track_status == tra.TrackStatus.CONFIRMED or track_status == tra.TrackStatus.TENTATIVE:
+            track_u, track_v = estimateImagePosition(tracker.track.x, tracker.track.y, tracker.track.z)
+
+            cv2.rectangle(frame,
+                        (int(track_u - detection.px_w/2), int(track_v - detection.px_h/2)),
+                        (int(track_u + detection.px_w/2), int(track_v + detection.px_h/2)),
+                        color=(0,0,255), thickness=2)
+
+            cv2.circle(frame, (int(track_u), int(track_v)), radius=5, color=(0,0,255), thickness=-1)
+
+
+            # need to draw velocity arrow...
+            #
+            #
+
+
+
+            track_label = ("Confirmed" if track_status == tra.TrackStatus.CONFIRMED else "Tentative") 
+            track_label = track_label + " track: (x: " + f"{tracker.track.x:.4f}" + ", y: " + f"{tracker.track.y:.4f}"  + ", z: " + f"{tracker.track.z:.4f}" 
+            track_label = track_label + ", dx: " + f"{tracker.track.dx:.4f}" + ", dy: " + f"{tracker.track.dy:.4f}"  + ", dz: " + f"{tracker.track.dz:.4f}" 
+
+
+
+        
 
         frame = cv2.flip(frame, 1) # optional flip as a last step before labelling, for viewing only 
-        cv2.putText(frame, detection_label,
-                    (10,20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color=(0,255,0), thickness=2)
+        cv2.putText(frame, detection_label, (10,20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color=(0,255,0), thickness=2)
+        cv2.putText(frame, track_label, (10,50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color=(0,255,0), thickness=2)
 
-        
-
-
-
-        # Track the object state...
-
-        tracker.update(object_detected, measurement, dt)
-        tracku, v = 
-        if tracker.track is not None:
-        u, v = estimateImagePosition(tracker.track.x, tracker.track.y, tracker.track.z)
-        
-        #etc...
 
 
         # Lock on to object... (will need rpi version of code)

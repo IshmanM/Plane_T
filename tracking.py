@@ -14,7 +14,8 @@ X, Y, Z, DZ, DX, DY, DZ = 0,1,2,3,4,5
 
 class Track:
     
-    def __init__ (self, initial_measurement: Measurement, min_hits: int, track_id=0):
+    def __init__ (self, initial_measurement: Measurement, min_hits: int, track_id=0,
+                  sigma_x=0.1, sigma_y=0.1, sigma_z=0.2, sigma_dx=1.0, sigma_dy=1.0, sigma_dz=1.0):
     
         self.id = track_id # not useful until MOT
 
@@ -25,26 +26,27 @@ class Track:
         ], dtype=float)
     
         # Need to tune starting covariance...
+        #   Note smaller initial sigma/covariance indicates higher initial position certainty 
         self.covariance = np.diag([
-            config.INIT_TRACK_SIGMA_X ** 2,
-            config.INIT_TRACK_SIGMA_Y ** 2,
-            config.INIT_TRACK_SIGMA_Z ** 2,
-            config.INIT_TRACK_SIGMA_DX ** 2,
-            config.INIT_TRACK_SIGMA_DY ** 2,
-            config.INIT_TRACK_SIGMA_DZ ** 2
+            sigma_x ** 2,
+            sigma_y ** 2,
+            sigma_z ** 2,
+            sigma_dx ** 2,
+            sigma_dy ** 2,
+            sigma_dy ** 2
         ], dtype=float)
 
         self.hit_streak = 1       # consecutive hits   
         self.missed_streak = 0    # consecutive misses
         self.confirmed = False if min_hits > 1 else True
 
-        self.last_measurement = initial_measurement
+        self.last_hit_measurement = initial_measurement
 
 
     def mark_hit(self, measurement, min_hits: int):
         self.hit_streak += 1
         self.missed_streak = 0
-        self.last_measurement = measurement
+        self.last_hit_measurement = measurement
 
         if self.hit_streak >= min_hits:
             self.confirmed = True
@@ -92,7 +94,9 @@ class SingleObjectTracker:
         max_missed_on_confirmed: int = 15,
         max_missed_on_tentative: int = 1,
         process_noise: float = 0.01,
-        measurement_noise: float = 0.05,
+        sigma_meas_x: float = 0.05,
+        sigma_meas_y: float = 0.05,
+        sigma_meas_z: float = 0.20,
         gate_threshold: float = 0.25,
     ):
         self.track = None
@@ -102,7 +106,9 @@ class SingleObjectTracker:
         
         # Kalman tuning parameters
         self.process_noise = process_noise
-        self.measurement_noise = measurement_noise
+        self.sigma_meas_x = sigma_meas_x  # meters
+        self.sigma_meas_y = sigma_meas_y  # meters
+        self.sigma_meas_z = sigma_meas_z  # meters
         self.gate_threshold = gate_threshold
 
     
@@ -128,18 +134,16 @@ class SingleObjectTracker:
         """
 
         if self.track is None:
-            return
+            raise ValueError("Cannot update without an active track.")
         
         x_k_prev = self.track.state
-
         P_k_prev = self.track.covariance
-
         F_k = np.eye(6, dtype=float) # State transition matrix
         F_k[X, DX] = dt
         F_k[Y, DY] = dt
         F_k[Z, DZ] = dt
-
         Q_k = np.eye(6, dtype=float) * self.process_noise
+        
         x_k_pred = F_k @ x_k_prev
         P_k_pred = F_k @ P_k_prev @ F_k.T + Q_k
 
@@ -148,9 +152,48 @@ class SingleObjectTracker:
         return
        
     def update_with_measurement(self, measurement: Measurement):
-        
-       #... self.track.mark_detected <--DO NOT DO THIS HERE
+        """
+        Kalman measurement update/correction step.
 
+        Theory:
+            z_k       = measurement
+            y_k       = innovation / residual. Difference between actual measurement and predicted measurement
+            S_k       = innovation covariance. Uncertainty of the innovation
+            K_k       = Kalman gain
+            x_k       = corrected state estimate
+            P_k       = corrected covariance estimate
+
+        In this tracker:
+            state       = [x, y, z, dx, dy, dz]
+            measurement = [x, y, z]
+        """
+        if self.track is None:
+            raise ValueError("Cannot update without an active track.")
+        
+        z_k = np.array([measurement.x, measurement.y, measurement.z], dtype=float) 
+        x_k_pred = self.track.state
+        P_k_pred = self.track.covariance
+        # H_k: Maps state [x, y, z, dx, dy, dz] -> measurement [x, y, z]
+        H_k = np.zeros((3, 6), dtype=float)
+        H_k[0, X] = 1.0
+        H_k[1, Y] = 1.0
+        H_k[2, Z] = 1.0
+        # R_k: measurement noise covariance
+        R_k = np.diag([
+            self.sigma_meas_x**2,
+            self.sigma_meas_y**2,
+            self.sigma_meas_z**2
+        ])
+
+        y_k = z_k - H_k @ x_k_pred 
+        S_k = H_k @ P_k_pred @ H_k.T + R_k
+        K_k = P_k_pred @ H_k.T @ np.linalg.inv(S_k)
+        x_k = x_k_pred + K_k @ y_k
+        I = np.eye(6, dtype=float)
+        P_k = (I - K_k @ H_k) @ P_k_pred
+
+        self.track.state = x_k
+        self.track.covariance = P_k
         return
 
 
@@ -186,7 +229,7 @@ class SingleObjectTracker:
                         self.track = Track(measurement)
             else:
                 # hit
-                self.track.mark_hit()
+                self.track.mark_hit(measurement)
                 self.update_with_measurement(measurement) # Kalman Measurement update
         
         return TrackStatus.CONFIRMED if self.track.confirmed else TrackStatus.TENTATIVE
