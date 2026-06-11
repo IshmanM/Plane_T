@@ -1,11 +1,11 @@
 import cv2
 import numpy as np
-import tracking as tra
-import detection as det
-import visualization as vis
+from tracking import TrackStatus, SingleObjectTracker
+from detection import detectSingleObject
 import config
-from util import estimateImagePosition
+from camera_geometry import estimateImagePosition
 from datetime import datetime
+import time
 
 
 
@@ -16,8 +16,8 @@ cap.set(cv2.CAP_PROP_FPS, config.FPS)
 
 if __name__ == "__main__": 
 
-    tracker = tra.SingleObjectTracker()
-    dt = 1/config.FPS
+    tracker = SingleObjectTracker()
+    # dt = 1/config.FPS # replacing this with the frame_time idea
 
     last_detection_px_w = 0
     last_detection_px_h = 0
@@ -28,13 +28,15 @@ if __name__ == "__main__":
         
 
         if not paused:
-            ret, frame = cap.read()
+            
+            frame_time = time.perf_counter()
+            ret, frame = cap.read() #doesnt oalways give latest frame but that's a future optimization.
             if not ret:
                 print("Possible camera failure")
                 break
 
             # Detect the object and produce a measurement
-            object_detected, detection, measurement = det.detectSingleObject(frame)
+            object_detected, detection, measurement = detectSingleObject(frame)
             detection_label = "No detections"
 
             if object_detected:
@@ -52,10 +54,10 @@ if __name__ == "__main__":
 
 
             # Track the object state
-            track_status = tracker.update(object_detected, measurement, dt)
+            track_status = tracker.update(object_detected, measurement, frame_time)
             
             track_label = "Dead track"
-            if track_status == tra.TrackStatus.CONFIRMED or track_status == tra.TrackStatus.TENTATIVE:
+            if track_status == TrackStatus.CONFIRMED or track_status == TrackStatus.TENTATIVE:
                 track_u, track_v = estimateImagePosition(tracker.track.x, tracker.track.y, tracker.track.z)
 
                 # rectangle is drawn based on last detected px_w, px_h. might change this...
@@ -77,7 +79,7 @@ if __name__ == "__main__":
                     )
                     cv2.arrowedLine(frame, (int(track_u), int(track_v)), arrow_end, (0, 0, 255), thickness=2, tipLength=0.25)
 
-                track_label = ("Confirmed" if track_status == tra.TrackStatus.CONFIRMED else "Tentative") 
+                track_label = ("Confirmed" if track_status == TrackStatus.CONFIRMED else "Tentative") 
                 track_label = track_label + " track: (x: " + f"{tracker.track.x:.4f}" + ", y: " + f"{tracker.track.y:.4f}"  + ", z: " + f"{tracker.track.z:.4f}" 
                 track_label = track_label + ", dx: " + f"{tracker.track.dx:.4f}" + ", dy: " + f"{tracker.track.dy:.4f}"  + ", dz: " + f"{tracker.track.dz:.4f}" + ")"
 
@@ -89,6 +91,11 @@ if __name__ == "__main__":
             cv2.putText(frame, detection_label, (10,20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color=(0,255,0), thickness=1)
             cv2.putText(frame, track_label, (10,50), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color=(0,0,255), thickness=1)
 
+
+            # Predict the future position of the object
+            #
+            #
+            #
 
 
             # Lock on to object... (will need rpi version of code)

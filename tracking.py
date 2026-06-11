@@ -1,8 +1,7 @@
 import cv2
-import models
 import numpy as np
 from enum import Enum, auto
-from models import Detection, Measurement
+from detection import Detection, Measurement
 import config
 
 class TrackStatus(Enum):
@@ -12,9 +11,11 @@ class TrackStatus(Enum):
 
 X, Y, Z, DX, DY, DZ = 0,1,2,3,4,5
 
+MAX_TRACK_ID = 2**32 - 1 # max uint32 number
+
 class Track:
     
-    def __init__ (self, initial_measurement: Measurement, min_hits: int, track_id=0,
+    def __init__ (self, initial_measurement: Measurement, initial_time, min_hits: int, track_id=0,
                   sigma_x=0.1, sigma_y=0.1, sigma_z=0.2, sigma_dx=1.0, sigma_dy=1.0, sigma_dz=1.0):
     
         self.id = track_id # not useful until MOT
@@ -24,6 +25,7 @@ class Track:
             initial_measurement.x, initial_measurement.y, initial_measurement.z,
             0.0, 0.0, 0.0
         ], dtype=float)
+        self.state_time = initial_time # time current KF state represents
     
         # Need to tune starting covariance...
         #   Note smaller initial sigma/covariance indicates higher initial position certainty 
@@ -85,7 +87,7 @@ class Track:
         return self.state[DZ]   
 
 
-
+# eventially need to make this tracker class derived from some base class, and use the base class in launcher.py definitions
 
 class SingleObjectTracker:
     def __init__(
@@ -100,6 +102,8 @@ class SingleObjectTracker:
         gate_threshold: float = 0.25,
     ):
         self.track = None
+        self.next_track_id = 0 
+        self.track_status = TrackStatus.DEAD 
         self.min_hits = min_hits
         self.max_missed_on_confirmed = max_missed_on_confirmed
         self.max_missed_on_tentative = max_missed_on_tentative
@@ -112,7 +116,7 @@ class SingleObjectTracker:
         self.gate_threshold = gate_threshold
 
     
-    def gating_distance(self, measurement: Measurement):
+    def _gating_distance(self, measurement: Measurement):
         if self.track is None:
             raise ValueError("Cannot compute gating distance without an active track.")
         
@@ -121,7 +125,7 @@ class SingleObjectTracker:
         diff = measurement_position - self.track.state[:3]
         return float(diff @ diff)
 
-    def predict(self, dt):
+    def _predict(self, dt):
         """
         Kalman prediction step.
 
@@ -151,7 +155,7 @@ class SingleObjectTracker:
         self.track.covariance = P_k_pred
         return
        
-    def update_with_measurement(self, measurement: Measurement):
+    def _update_with_measurement(self, measurement: Measurement):
         """
         Kalman measurement update/correction step.
 
@@ -197,16 +201,22 @@ class SingleObjectTracker:
         return
 
 
-    def update(self, object_detected, measurement: Measurement, dt):
+    def _create_track(self, measurement: Measurement, initial_time):
+        self.track = Track(measurement, initial_time, self.min_hits, self.next_track_id)            
+        self.next_track_id = self.next_track_id + 1 if self.next_track_id != MAX_TRACK_ID else 0
+
+
+    def update(self, object_detected, measurement: Measurement, frame_time):
         
         # None track logic:
         #     any measurement should create a track.
         #     a missing measurement should do nothing.
         if self.track is None:
             if not object_detected:
-                return TrackStatus.DEAD  
+                self.track_status = TrackStatus.DEAD #for sanity
+                return self.track_status 
             else:
-                self.track = Track(measurement, self.min_hits)
+                self._create_track(measurement, initial_time=frame_time)
 
         # TENTATIVE track logic:
         #     both a far & missing measurement should count as a miss, then check if dead.
@@ -215,27 +225,35 @@ class SingleObjectTracker:
         #     defferent max_missed
         #     they do not become TENTATIVE tracks just because of a miss
         else:
-            self.predict(dt) # Kalman Prediction update
+            dt = frame_time - self.track.state_time
+            self._predict(dt) # Kalman Prediction update
             
-            if (not object_detected) or (self.gating_distance(measurement) > self.gate_threshold):
+            if (not object_detected) or (self._gating_distance(measurement) > self.gate_threshold):
                 # miss 
                 self.track.mark_missed()
                 max_missed = self.max_missed_on_confirmed if self.track.confirmed else self.max_missed_on_tentative
                 if self.track.is_dead(max_missed):
                     if not object_detected:
                         self.track = None 
-                        return TrackStatus.DEAD
+                        self.track_status = TrackStatus.DEAD
+                        return self.track_status
                     else:
-                        self.track = Track(measurement, self.min_hits)
+                        self._create_track(measurement, initial_time=frame_time)
             else:
                 # hit
                 self.track.mark_hit(measurement, self.min_hits)
-                self.update_with_measurement(measurement) # Kalman Measurement update
+                self._update_with_measurement(measurement) # Kalman Measurement update
+
+            self.track.state_time = frame_time
         
-        return TrackStatus.CONFIRMED if self.track.confirmed else TrackStatus.TENTATIVE
+        self.track_status = TrackStatus.CONFIRMED if self.track.confirmed else TrackStatus.TENTATIVE
+        return self.track_status
     
 
-        
+    
+
+
+    
 
 
 
