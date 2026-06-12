@@ -25,17 +25,32 @@ SERVO_IDX = {
 }
 
 DEFAULT_SERVO_ANGLES = np.zeros(NUM_SERVOS, dtype=float)
-DEFAULT_SERVO_ANGLES[SERVO_IDX["pan"]] = 90.0
-DEFAULT_SERVO_ANGLES[SERVO_IDX["tilt"]] = 45.0
+DEFAULT_SERVO_ANGLES[SERVO_IDX["pan"]] = 90.0 # degrees
+DEFAULT_SERVO_ANGLES[SERVO_IDX["tilt"]] = 45.0 # degrees
 
 MIN_SERVO_ANGLES = np.zeros(NUM_SERVOS, dtype=float)
-MIN_SERVO_ANGLES[SERVO_IDX["pan"]] = 0.0
-MIN_SERVO_ANGLES[SERVO_IDX["tilt"]] = 0.0
+MIN_SERVO_ANGLES[SERVO_IDX["pan"]] = 0.0 # degrees
+MIN_SERVO_ANGLES[SERVO_IDX["tilt"]] = 0.0 # degrees
 
 MAX_SERVO_ANGLES = np.zeros(NUM_SERVOS, dtype=float)
-MIN_SERVO_ANGLES[SERVO_IDX["pan"]] = 180.0
-MIN_SERVO_ANGLES[SERVO_IDX["tilt"]] = 85.0
+MIN_SERVO_ANGLES[SERVO_IDX["pan"]] = 180.0 # degrees
+MIN_SERVO_ANGLES[SERVO_IDX["tilt"]] = 85.0 # degrees
 
+SERVO_DEADBAND = np.zeros(NUM_SERVOS, dtype=float)
+SERVO_DEADBAND[SERVO_IDX["pan"]] = 0.5 # degrees
+SERVO_DEADBAND[SERVO_IDX["tilt"]] = 0.5 # degrees
+
+MAX_SERVO_SPEEDS = np.zeros(NUM_SERVOS, dtype=float)
+MAX_SERVO_SPEEDS[SERVO_IDX["pan"]] = 120.0 # degrees/s
+MAX_SERVO_SPEEDS[SERVO_IDX["tilt"]] = 90.0 # degrees/s
+
+
+MAX_SEQ = 2**32 - 1 # max uint32 number
+SEARCH_CENTER_PAN = 90.0 # degrees
+SEARCH_PAN_AMPLITUDE = 75.0 # degrees
+SEARCH_FREQUENCY = 0.2 #hz
+
+CMD_SMOOTHING_TAU = 0.05 # seconds
 
 
 class ActivePlan:
@@ -43,10 +58,8 @@ class ActivePlan:
         self, 
         track_id: int,
         raw_servo_angles: np.ndarray,
-        estimate_time: float,
-        created_time: float, # not that important
-        expected_ready_time: float, 
-        # is_feasible: bool,
+        estimate_time: float | None = None,
+        ready_time: float | None = None, 
         intercept_position: np.ndarray | None = None, 
         intercept_time: float | None = None,
         fire_time: float | None = None,
@@ -60,15 +73,13 @@ class ActivePlan:
         self.raw_servo_angles = np.asarray(raw_servo_angles, dtype=float).copy()
         
         self.estimate_time = estimate_time # will use the track state_time
-        self.created_time = created_time                # is this necessary?
-        self.expected_ready_time = expected_ready_time  
-
-        # self.feasible = is_feasible           # is this necessary?
+        self.created_time = time.perf_counter()    # is this necessary?
+        self.ready_time = ready_time # expected time when the servos will be in position for firing
 
         self.fire_time = fire_time
 
 
-MAX_SEQ = 2**32 - 1 # max uint32 number
+
 
 class Launcher:
     def __init__(
@@ -77,8 +88,7 @@ class Launcher:
     ):
         self.mode = LauncherMode.SEARCHING
         
-        now = time.perf_counter() # not a self variable
-        self.active_plan = self._make_search_plan(now)
+        self.active_plan = self._make_search_plan(now=time.perf_counter())
 
         self.last_cmd_servo_angles = None # Latest actual cmd sent after filtering / rate limiting
         self.last_cmd_time = None 
@@ -183,21 +193,66 @@ class Launcher:
         else:
             dt_cmd = now - self.last_cmd_time
             q_cmd = self._cmd_filter(dt_cmd) 
-            # could maybe just have filter implemented here if one time use...
         
         self._send_cmd(q_cmd, now) # could maybe just have this implemented here if one time use...
 
     
     def _cmd_filter(self, dt_cmd):
-      
-        # uses self.active_plan.raw_servo_angles
-        # uses self.last_cmd_servo_angles
-        # uses MIN_SERVO_ANGLES, MAX_SERVO_ANGLES, MAX_SERVO_SPEEDS 
-        # uses SERVO_DEADBAND and CMD_SMOOTHING_TAU
-        # uses dt_cmd 
-        #
-        #
-        raise NotImplementedError
+        """
+        Command-side servo filter.
+
+        Applies:
+            1. target clipping
+            2. optional smoothing
+            3. deadband
+            4. max servo speed limiting
+            5. final clipping
+        """
+
+        q_raw = np.asarray(self.active_plan.raw_servo_angles, dtype=float).copy()
+        q_prev = np.asarray(self.last_cmd_servo_angles, dtype=float).copy()
+
+        # clippling, probably not needed since should be clipped already
+        q_raw = np.clip(q_raw, MIN_SERVO_ANGLES, MAX_SERVO_ANGLES)
+        q_prev = np.clip(q_prev, MIN_SERVO_ANGLES, MAX_SERVO_ANGLES)
+
+        # Improbable edge case, addressed for sanity:
+        if dt_cmd <= 0.0:
+            return q_prev.copy()
+        
+        q_target = None
+        # SEARCHING is already a smooth sine scan, so avoid over-smoothing/deadbanding it.
+        # But do NOT bypass the speed limit, because entering SEARCHING could still cause
+        # a big jump from the previous target angle to the first search angle.
+        if self.mode == LauncherMode.SEARCHING:
+            q_target = q_raw.copy()
+        else:
+            # Exponential smoothing:
+            #
+            # alpha near 1.0 -> follows target quickly
+            # alpha near 0.0 -> very smooth / slow response
+            tau = CMD_SMOOTHING_TAU
+            if tau <= 0.0:
+                q_target = q_raw.copy()
+            else:
+                alpha = dt_cmd/(tau + dt_cmd)
+                q_target = q_prev + alpha*(q_raw - q_prev)
+            
+            # Deadband should be based on the real target error, not the smoothed step.
+            # Otherwise smoothing could make every step tiny and accidentally freeze motion.
+            deadband = np.asarray(SERVO_DEADBAND, dtype=float).copy()
+            inside_deadband = np.abs(q_raw - q_prev) <= deadband
+            q_target = np.where(inside_deadband, q_prev, q_target)
+        
+        # Rate limit: the command cannot move faster than the servo speed limit.
+        max_step = np.asarray(MAX_SERVO_SPEEDS, dtype=float)*dt_cmd
+
+        step = q_target - q_prev
+        step = np.clip(step, -max_step, max_step)
+        q_cmd = q_prev + step
+
+        # final clip to deal with misc/rare numerical or bugged edge cases
+        return np.clip(q_cmd, MIN_SERVO_ANGLES, MAX_SERVO_ANGLES)
 
     
     def _send_cmd(self, q_cmd: np.ndarray, now):
@@ -219,10 +274,20 @@ class Launcher:
     
     
     def _make_search_plan(self, now) -> ActivePlan:
-        #...
-        #-1 for the track id
-        #
-        raise NotImplementedError
+        # oscillating search pattern with fixed tilt, rotating pan
+        q = DEFAULT_SERVO_ANGLES.copy()
+        q[SERVO_IDX["pan"]] = (SEARCH_CENTER_PAN + SEARCH_PAN_AMPLITUDE*np.sin(2.0*np.pi*SEARCH_FREQUENCY*now))
+        q = np.clip(q, MIN_SERVO_ANGLES, MAX_SERVO_ANGLES)
+
+        return ActivePlan(
+            track_id=-1, #-1 for search
+            raw_servo_angles=q, # <--hopefully this doesnt conflict with the filter, make SEARCH_FREQUENCY slow enough
+            estimate_time=None,
+            ready_time=None,
+            intercept_position=None,
+            intercept_time=None,
+            fire_time=None
+        )
 
 
     def _close_to_fire_time(self, now, fire_time=None) -> bool:
@@ -243,7 +308,7 @@ class Launcher:
         #
         #
         # return valid_plan_computed (boolean), plan (None if not feasible)
-        # can make a first plan that has fire time that is within _close_to_fire_time of now
+        # can make a first plan that has fire_time that is within _close_to_fire_time of now
         #
         raise NotImplementedError
     
